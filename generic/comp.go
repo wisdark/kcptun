@@ -2,6 +2,7 @@ package generic
 
 import (
 	"net"
+	"time"
 
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
@@ -30,6 +31,26 @@ func (c *CompStream) Write(p []byte) (n int, err error) {
 
 func (c *CompStream) Close() error {
 	return c.conn.Close()
+}
+
+func (c *CompStream) LocalAddr() net.Addr {
+	return c.conn.LocalAddr()
+}
+
+func (c *CompStream) RemoteAddr() net.Addr {
+	return c.conn.RemoteAddr()
+}
+
+func (c *CompStream) SetDeadline(t time.Time) error {
+	return c.conn.SetDeadline(t)
+}
+
+func (c *CompStream) SetReadDeadline(t time.Time) error {
+	return c.conn.SetReadDeadline(t)
+}
+
+func (c *CompStream) SetWriteDeadline(t time.Time) error {
+	return c.conn.SetWriteDeadline(t)
 }
 
 func NewCompStream(conn net.Conn) *CompStream {
