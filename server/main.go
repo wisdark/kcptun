@@ -16,18 +16,20 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 
 	"github.com/urfave/cli"
-	kcp "github.com/xtaci/kcp-go"
+	kcp "github.com/xtaci/kcp-go/v5"
 	"github.com/xtaci/kcptun/generic"
 	"github.com/xtaci/smux"
-	smuxv2 "github.com/xtaci/smux/v2"
 	"github.com/xtaci/tcpraw"
 )
 
-// SALT is use for pbkdf2 key expansion
-const SALT = "kcp-go"
-
-// maximum supported smux version
-const maxSmuxVer = 2
+const (
+	// SALT is use for pbkdf2 key expansion
+	SALT = "kcp-go"
+	// maximum supported smux version
+	maxSmuxVer = 2
+	// stream copy buffer size
+	bufSize = 4096
+)
 
 // VERSION is injected by buildflags
 var VERSION = "SELFBUILD"
@@ -42,45 +44,27 @@ func handleMux(conn net.Conn, config *Config) {
 	log.Println("smux version:", config.SmuxVer, "on connection:", conn.LocalAddr(), "->", conn.RemoteAddr())
 
 	// stream multiplex
-	var muxer generic.Mux
-	switch config.SmuxVer {
-	case 1:
-		smuxConfig := smux.DefaultConfig()
-		smuxConfig.MaxReceiveBuffer = config.SmuxBuf
-		smuxConfig.KeepAliveInterval = time.Duration(config.KeepAlive) * time.Second
+	smuxConfig := smux.DefaultConfig()
+	smuxConfig.Version = config.SmuxVer
+	smuxConfig.MaxReceiveBuffer = config.SmuxBuf
+	smuxConfig.MaxStreamBuffer = config.StreamBuf
+	smuxConfig.KeepAliveInterval = time.Duration(config.KeepAlive) * time.Second
 
-		mux, err := smux.Server(conn, smuxConfig)
-		if err != nil {
-			log.Println(err)
-			return
-		}
-		defer mux.Close()
-		muxer = mux
-	case 2:
-		smuxConfig := smuxv2.DefaultConfig()
-		smuxConfig.MaxReceiveBuffer = config.SmuxBuf
-		smuxConfig.MaxStreamBuffer = config.StreamBuf
-		smuxConfig.KeepAliveInterval = time.Duration(config.KeepAlive) * time.Second
-
-		mux, err := smuxv2.Server(conn, smuxConfig)
-		if err != nil {
-			log.Println(err)
-			return
-		}
-		defer mux.Close()
-		muxer = mux
-	default:
-		panic("incorrect smux version")
+	mux, err := smux.Server(conn, smuxConfig)
+	if err != nil {
+		log.Println(err)
+		return
 	}
+	defer mux.Close()
 
 	for {
-		stream, err := muxer.Accept()
+		stream, err := mux.AcceptStream()
 		if err != nil {
 			log.Println(err)
 			return
 		}
 
-		go func(p1 io.ReadWriteCloser) {
+		go func(p1 *smux.Stream) {
 			var p2 net.Conn
 			var err error
 			if !isUnix {
@@ -99,7 +83,7 @@ func handleMux(conn net.Conn, config *Config) {
 	}
 }
 
-func handleClient(p1 io.ReadWriteCloser, p2 net.Conn, quiet bool) {
+func handleClient(p1 *smux.Stream, p2 net.Conn, quiet bool) {
 	logln := func(v ...interface{}) {
 		if !quiet {
 			log.Println(v...)
@@ -109,40 +93,22 @@ func handleClient(p1 io.ReadWriteCloser, p2 net.Conn, quiet bool) {
 	defer p1.Close()
 	defer p2.Close()
 
-	if s1, ok := p1.(generic.Stream); ok {
-		logln("stream opened", "in:", fmt.Sprint(s1.RemoteAddr(), "(", s1.ID(), ")"), "out:", p2.RemoteAddr())
-		defer logln("stream closed", "in:", fmt.Sprint(s1.RemoteAddr(), "(", s1.ID(), ")"), "out:", p2.RemoteAddr())
-	}
+	logln("stream opened", "in:", fmt.Sprint(p1.RemoteAddr(), "(", p1.ID(), ")"), "out:", p2.RemoteAddr())
+	defer logln("stream closed", "in:", fmt.Sprint(p1.RemoteAddr(), "(", p1.ID(), ")"), "out:", p2.RemoteAddr())
 
 	// start tunnel & wait for tunnel termination
-	streamCopy := func(dst io.Writer, src io.ReadCloser) chan struct{} {
-		die := make(chan struct{})
-		go func() {
-			if _, err := generic.Copy(dst, src); err != nil {
-				if s1, ok := p1.(generic.Stream); ok {
-					// verbose error handling
-					cause := err
-					if e, ok := err.(interface{ Cause() error }); ok {
-						cause = e.Cause()
-					}
-
-					switch cause {
-					case smux.ErrInvalidProtocol:
-						log.Println("smux version:1", err, "in:", fmt.Sprint(s1.RemoteAddr(), "(", s1.ID(), ")"), "out:", p2.RemoteAddr())
-					case smuxv2.ErrInvalidProtocol:
-						log.Println("smux version:2", err, "in:", fmt.Sprint(s1.RemoteAddr(), "(", s1.ID(), ")"), "out:", p2.RemoteAddr())
-					}
-				}
+	streamCopy := func(dst io.Writer, src io.ReadCloser) {
+		if _, err := generic.Copy(dst, src); err != nil {
+			if err == smux.ErrInvalidProtocol {
+				log.Println("smux", err, "in:", fmt.Sprint(p1.RemoteAddr(), "(", p1.ID(), ")"), "out:", p2.RemoteAddr())
 			}
-			close(die)
-		}()
-		return die
+		}
+		p1.Close()
+		p2.Close()
 	}
 
-	select {
-	case <-streamCopy(p1, p2):
-	case <-streamCopy(p2, p1):
-	}
+	go streamCopy(p2, p1)
+	streamCopy(p1, p2)
 }
 
 func checkError(err error) {
