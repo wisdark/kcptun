@@ -149,7 +149,7 @@ func main() {
 		cli.StringFlag{
 			Name:  "crypt",
 			Value: "aes",
-			Usage: "aes, aes-128, aes-192, salsa20, blowfish, twofish, cast5, 3des, tea, xtea, xor, sm4, none",
+			Usage: "aes, aes-128, aes-192, salsa20, blowfish, twofish, cast5, 3des, tea, xtea, xor, sm4, none, null",
 		},
 		cli.StringFlag{
 			Name:  "mode",
@@ -361,6 +361,8 @@ func main() {
 		log.Println("key derivation done")
 		var block kcp.BlockCrypt
 		switch config.Crypt {
+		case "null":
+			block = nil
 		case "sm4":
 			block, _ = kcp.NewSM4BlockCrypt(pass[:16])
 		case "tea":
@@ -430,22 +432,35 @@ func main() {
 			}
 		}
 
-		if config.TCP { // tcp dual stack
-			if conn, err := tcpraw.Listen("tcp", config.Listen); err == nil {
-				lis, err := kcp.ServeConn(block, config.DataShard, config.ParityShard, conn)
-				checkError(err)
-				wg.Add(1)
-				go loop(lis)
-			} else {
-				log.Println(err)
-			}
+		mp, err := generic.ParseMultiPort(config.Listen)
+		if err != nil {
+			log.Println(err)
+			return err
 		}
 
-		// udp stack
-		lis, err := kcp.ListenWithOptions(config.Listen, block, config.DataShard, config.ParityShard)
-		checkError(err)
-		wg.Add(1)
-		go loop(lis)
+		// create multiple listener
+		for port := mp.MinPort; port <= mp.MaxPort; port++ {
+			listenAddr := fmt.Sprintf("%v:%v", mp.Host, port)
+			if config.TCP { // tcp dual stack
+				if conn, err := tcpraw.Listen("tcp", listenAddr); err == nil {
+					log.Printf("Listening on: %v/tcp", listenAddr)
+					lis, err := kcp.ServeConn(block, config.DataShard, config.ParityShard, conn)
+					checkError(err)
+					wg.Add(1)
+					go loop(lis)
+				} else {
+					log.Println(err)
+				}
+			}
+
+			// udp stack
+			log.Printf("Listening on: %v/udp", listenAddr)
+			lis, err := kcp.ListenWithOptions(listenAddr, block, config.DataShard, config.ParityShard)
+			checkError(err)
+			wg.Add(1)
+			go loop(lis)
+		}
+
 		wg.Wait()
 		return nil
 	}
