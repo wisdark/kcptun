@@ -37,6 +37,9 @@ type Config struct {
 	SnmpPeriod   int    `json:"snmpperiod"`
 	Quiet        bool   `json:"quiet"`
 	TCP          bool   `json:"tcp"`
+	Pprof        bool   `json:"pprof"`
+	QPP          bool   `json:"qpp"`
+	QPPCount     int    `json:"qpp-count"`
 }
 
 func parseJSONConfig(config *Config, path string) error {

@@ -7,6 +7,8 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/urfave/cli"
 	kcp "github.com/xtaci/kcp-go/v5"
 	"github.com/xtaci/kcptun/generic"
+	"github.com/xtaci/qpp"
 	"github.com/xtaci/smux"
 )
 
@@ -26,6 +29,8 @@ const (
 	maxSmuxVer = 2
 	// stream copy buffer size
 	bufSize = 4096
+	// quantum bits
+	QUBIT = 8
 )
 
 // VERSION is injected by buildflags
@@ -64,6 +69,64 @@ func handleClient(session *smux.Session, p1 net.Conn, quiet bool) {
 
 	go streamCopy(p1, p2)
 	streamCopy(p2, p1)
+}
+
+// same as above, but handles quantum permutation pads
+func handleQPPClient(_Q_ *qpp.QuantumPermutationPad, seed []byte, session *smux.Session, p1 net.Conn, quiet bool) {
+	logln := func(v ...interface{}) {
+		if !quiet {
+			log.Println(v...)
+		}
+	}
+	defer p1.Close()
+	p2, err := session.OpenStream()
+	if err != nil {
+		logln(err)
+		return
+	}
+
+	defer p2.Close()
+
+	logln("stream opened", "in:", p1.RemoteAddr(), "out:", fmt.Sprint(p2.RemoteAddr(), "(", p2.ID(), ")"))
+	defer logln("stream closed", "in:", p1.RemoteAddr(), "out:", fmt.Sprint(p2.RemoteAddr(), "(", p2.ID(), ")"))
+
+	// copy from net.Conn, QPP-encrypt and send to session
+	go func() {
+		buf := make([]byte, bufSize)
+		prng := _Q_.CreatePRNG(seed)
+		for {
+			n, err := p1.Read(buf)
+			if err != nil {
+				p1.Close()
+				return
+			}
+
+			// QPP-encrypt
+			_Q_.EncryptWithPRNG(buf[:n], prng)
+			if _, err = p2.Write(buf[:n]); err != nil {
+				p2.Close()
+				return
+			}
+		}
+	}()
+
+	// copy from stream, QPP-decrypt and send to net.Conn
+	buf := make([]byte, bufSize)
+	prng := _Q_.CreatePRNG(seed)
+	for {
+		n, err := p2.Read(buf)
+		if err != nil {
+			p2.Close()
+			return
+		}
+
+		// QPP-encrypt
+		_Q_.DecryptWithPRNG(buf[:n], prng)
+		if _, err = p1.Write(buf[:n]); err != nil {
+			p1.Close()
+			return
+		}
+	}
 }
 
 func checkError(err error) {
@@ -115,6 +178,15 @@ func main() {
 			Name:  "mode",
 			Value: "fast",
 			Usage: "profiles: fast3, fast2, fast, normal, manual",
+		},
+		cli.BoolFlag{
+			Name:  "QPP",
+			Usage: "enable Quantum Permutation Pads(QPP)",
+		},
+		cli.IntFlag{
+			Name:  "QPPCount",
+			Value: 64,
+			Usage: "the number of pads to use for QPP: The more pads you use, the more secure the encryption. Each pad requires 256 bytes.",
 		},
 		cli.IntFlag{
 			Name:  "conn",
@@ -243,6 +315,10 @@ func main() {
 			Value: "", // when the value is not empty, the config path must exists
 			Usage: "config from json file, which will override the command from shell",
 		},
+		cli.BoolFlag{
+			Name:  "pprof",
+			Usage: "start profiling server on :6060",
+		},
 	}
 	myApp.Action = func(c *cli.Context) error {
 		config := Config{}
@@ -276,6 +352,9 @@ func main() {
 		config.SnmpPeriod = c.Int("snmpperiod")
 		config.Quiet = c.Bool("quiet")
 		config.TCP = c.Bool("tcp")
+		config.Pprof = c.Bool("pprof")
+		config.QPP = c.Bool("QPP")
+		config.QPPCount = c.Int("QPPCount")
 
 		if c.String("c") != "" {
 			err := parseJSONConfig(&config, c.String("c"))
@@ -322,6 +401,8 @@ func main() {
 		log.Println("smux version:", config.SmuxVer)
 		log.Println("listening on:", listener.Addr())
 		log.Println("encryption:", config.Crypt)
+		log.Println("QPP:", config.QPP)
+		log.Println("QPP Count:", config.QPPCount)
 		log.Println("nodelay parameters:", config.NoDelay, config.Interval, config.Resend, config.NoCongestion)
 		log.Println("remote address:", config.RemoteAddr)
 		log.Println("sndwnd:", config.SndWnd, "rcvwnd:", config.RcvWnd)
@@ -341,6 +422,19 @@ func main() {
 		log.Println("snmpperiod:", config.SnmpPeriod)
 		log.Println("quiet:", config.Quiet)
 		log.Println("tcp:", config.TCP)
+		log.Println("pprof:", config.Pprof)
+
+		if config.QPP {
+			minSeedLength := qpp.QPPMinimumSeedLength(8)
+			if len(config.Key) < minSeedLength {
+				log.Printf("QPP Warning: 'key' has size of %d bytes, required %d bytes at least", len(config.Key), minSeedLength)
+			}
+
+			minPads := qpp.QPPMinimumPads(8)
+			if config.QPPCount < minPads {
+				log.Printf("QPP Warning: QPPCount %d, required %d at least", config.QPPCount, minPads)
+			}
+		}
 
 		// parameters check
 		if config.SmuxVer > maxSmuxVer {
@@ -443,6 +537,11 @@ func main() {
 		// start snmp logger
 		go generic.SnmpLogger(config.SnmpLog, config.SnmpPeriod)
 
+		// start pprof
+		if config.Pprof {
+			go http.ListenAndServe(":6060", nil)
+		}
+
 		// start scavenger
 		chScavenger := make(chan timedSession, 128)
 		go scavenger(chScavenger, &config)
@@ -451,6 +550,13 @@ func main() {
 		numconn := uint16(config.Conn)
 		muxes := make([]timedSession, numconn)
 		rr := uint16(0)
+
+		// create shared QPP
+		var _Q_ *qpp.QuantumPermutationPad
+		if config.QPP {
+			_Q_ = qpp.NewQPP([]byte(config.Key), uint16(config.QPPCount), QUBIT)
+		}
+
 		for {
 			p1, err := listener.Accept()
 			if err != nil {
@@ -468,7 +574,11 @@ func main() {
 				}
 			}
 
-			go handleClient(muxes[idx].session, p1, config.Quiet)
+			if !config.QPP {
+				go handleClient(muxes[idx].session, p1, config.Quiet)
+			} else {
+				go handleQPPClient(_Q_, []byte(config.Key), muxes[idx].session, p1, config.Quiet)
+			}
 			rr++
 		}
 	}
