@@ -1,11 +1,11 @@
-# <img src="logo.png" alt="kcptun" height="54px" /> 
+# <img src="assets/logo.png" alt="kcptun" height="54px" /> 
 
 [![Release][13]][14] [![Powered][17]][18] [![MIT licensed][11]][12] [![Build Status][3]][4] [![Go Report Card][5]][6] [![Downloads][15]][16] [![Docker][1]][2] 
 
 [1]: https://img.shields.io/docker/pulls/xtaci/kcptun
 [2]: https://hub.docker.com/r/xtaci/kcptun
-[3]: https://travis-ci.org/xtaci/kcptun.svg?branch=master
-[4]: https://travis-ci.org/xtaci/kcptun
+[3]: https://img.shields.io/github/created-at/xtaci/kcptun
+[4]: https://img.shields.io/github/created-at/xtaci/kcptun
 [5]: https://goreportcard.com/badge/github.com/xtaci/kcptun
 [6]: https://goreportcard.com/report/github.com/xtaci/kcptun
 [11]: https://img.shields.io/github/license/xtaci/kcptun
@@ -17,7 +17,7 @@
 [17]: https://img.shields.io/badge/KCP-Powered-blue.svg
 [18]: https://github.com/skywind3000/kcp
 
-<img src="kcptun.png" alt="kcptun" height="300px"/>
+<img src="assets/kcptun.png" alt="kcptun" height="300px"/>
 
 > *Disclaimer: kcptun maintains a single website — [github.com/xtaci/kcptun](https://github.com/xtaci/kcptun). Any websites other than [github.com/xtaci/kcptun](https://github.com/xtaci/kcptun) are not endorsed by xtaci.*
 
@@ -33,6 +33,10 @@
 <img src="https://github.com/xtaci/kcptun/assets/2346725/9358e8e5-2a4a-4be9-9859-62f1aaa553b0" alt="cpuinfo" height="400px"/>
 
 ### QuickStart
+
+Download:
+
+`curl -L  https://raw.githubusercontent.com/xtaci/kcptun/master/download.sh | sh`
 
 Increase the number of open files on your server, as:
 
@@ -77,15 +81,15 @@ $ ./build-release.sh
 $ cd build
 ```
 
-All precompiled releases are genereated from `build-release.sh` script.
+All precompiled releases are generated from `build-release.sh` script.
 
 ### Performance
 
-<img src="fast.png" alt="fast.com" height="256px" />  
+<img src="assets/fast.png" alt="fast.com" height="256px" />  
 
-![bandwidth](bw.png)
+![bandwidth](assets/bw.png)
 
-![flame](flame.png)
+![flame](assets/flame.png)
 
 > Practical bandwidth graph with parameters:  -mode fast3 -ds 10 -ps 3
 
@@ -93,55 +97,52 @@ All precompiled releases are genereated from `build-release.sh` script.
 
 ### Basic Tuning Guide
 
-#### Improving Thoughput
+#### Improving Throughput
 
-> **Q: I have a high speed network link, how to reach the maximum bandwidth?**        
+> **Q: I have a high-speed network link. How can I maximize bandwidth?**
 
-> **A:** Increase `-rcvwnd` on KCP Client and `-sndwnd` on KCP Server **simultaneously & gradually**, the mininum one decides the maximum transfer rate of the link, as `wnd * mtu / rtt`; Then try downloading something and to see if it meets your requirements. 
-(mtu is adjustable by `-mtu`)
+> **A:** Increase `-rcvwnd` on the KCP Client and `-sndwnd` on the KCP Server **simultaneously and gradually**. The minimum of these values determines the maximum transfer rate of the link, as `wnd * mtu / rtt`. Then, try downloading something to see if it meets your requirements. (The MTU is adjustable with `-mtu`.)
 
 #### Improving Latency
 
-> **Q: I'm using kcptun for game, I don't want any lag happening.**    
+> **Q: I'm using kcptun for gaming and want to avoid any lag.**
 
-> **A:** Lag means packet loss for most of the time, lags can be improved by changing `-mode`.
+> **A:** Lag often indicates packet loss. You can reduce lag by changing the `-mode` parameter. 
 
-> eg: `-mode fast3`    
+> For example: `-mode fast3`
 
-> Aggresiveness/Responsiveness on retransmission for embedded modes are:
+> Aggressiveness/Responsiveness on retransmission for embedded modes:
 
 > *fast3 > fast2 > fast > normal > default*
 
-#### HOLB
+#### Head-of-Line Blocking (HOLB)
 
-Since streams are multiplexed into a single physical channel, head of line blocking may appear under certain circumstances, by
-increasing `-smuxbuf` to a larger value (default 4MB) may mitigate this problem, obviously this will costs more memory.
+Since streams are multiplexed into a single physical channel, head-of-line blocking may occur. Increasing `-smuxbuf` to a larger value (default is 4MB) may mitigate this problem, though it will use more memory.
 
-For versions >= v20190924, you can switch to smux version 2, smux v2 has options to limit per-stream memory usage, now set `-smuxver 2` to enable smux v2, and adjust `-streambuf` to limit per-stream memory usage, eg: `-streambuf 2097152` can limit per-stream memory usage to 2MB. By limiting stream buffer on the receiver side, a back-pressure will be conducted to the sender and limits reading, and finally prevent source from sending too much data to occupy every bits of buffer along the link. (Setting -smuxver **MUST** be **IDENTICAL** on both side, default is 1. )
+For versions >= v20190924, you can switch to smux version 2. Smux v2 has options to limit per-stream memory usage. Set `-smuxver 2` to enable smux v2, and adjust `-streambuf` to limit per-stream memory usage. For example: `-streambuf 2097152` limits per-stream memory usage to 2MB. Limiting the stream buffer on the receiver side applies back-pressure to the sender, preventing the sender from overwhelming the buffer along the link. (The `-smuxver` setting **MUST** be **IDENTICAL** on both sides, the default is 1.)
 
 #### Slow Devices
 
-kcptun made use of **ReedSolomon-Codes** to recover lost packets, which requires massive amount of computation, a low-end ARM device cannot satisfy kcptun well. To unleash the full potential of kcptun, a multi-core x86 homeserver CPU like AMD Opteron is recommended.
-If you insist on running under some ARM routers, you'd better turn off `FEC` and use `salsa20` as the encryption method.
+kcptun uses **Reed-Solomon Codes** to recover lost packets, which requires substantial computation. Low-end ARM devices may not perform well with kcptun. For optimal performance, a multi-core x86 home server CPU like AMD Opteron is recommended. If you must use ARM routers, it's best to disable `FEC` and use `salsa20` as the encryption method.
 
 ### Expert Tuning Guide
 
 #### Overview
 
-<p align="left"><img src="layeredparams.png" alt="params" height="450px"/></p>
+<p align="left"><img src="assets/layeredparams.png" alt="params" height="450px"/></p>
 
 #### Usage
 
 ```
-➜  ~ ./client_linux_amd64 -h
+> ./client_freebsd_amd64 -h
 NAME:
    kcptun - client(with SMUX)
 
 USAGE:
-   client_linux_amd64 [global options] command [command options] [arguments...]
+   client_freebsd_amd64 [global options] command [command options] [arguments...]
 
 VERSION:
-   20190924
+   20240729
 
 COMMANDS:
    help, h  Shows a list of commands or help for one command
@@ -150,8 +151,10 @@ GLOBAL OPTIONS:
    --localaddr value, -l value      local listen address (default: ":12948")
    --remoteaddr value, -r value     kcp server address, eg: "IP:29900" a for single port, "IP:minport-maxport" for port range (default: "vps:29900")
    --key value                      pre-shared secret between client and server (default: "it's a secrect") [$KCPTUN_KEY]
-   --crypt value                    aes, aes-128, aes-192, salsa20, blowfish, twofish, cast5, 3des, tea, xtea, xor, sm4, none (default: "aes")
+   --crypt value                    aes, aes-128, aes-192, salsa20, blowfish, twofish, cast5, 3des, tea, xtea, xor, sm4, none, null (default: "aes")
    --mode value                     profiles: fast3, fast2, fast, normal, manual (default: "fast")
+   --QPP                            enable Quantum Permutation Pads(QPP)
+   --QPPCount value                 the prime number of pads to use for QPP: The more pads you use, the more secure the encryption. Each pad requires 256 bytes. (default: 61)
    --conn value                     set num of UDP connections to server (default: 1)
    --autoexpire value               set auto expiration time(in seconds) for a single UDP connection, 0 to disable (default: 0)
    --scavengettl value              set how long an expired connection can live (in seconds) (default: 600)
@@ -173,18 +176,19 @@ GLOBAL OPTIONS:
    --quiet                          to suppress the 'stream open/close' messages
    --tcp                            to emulate a TCP connection(linux)
    -c value                         config from json file, which will override the command from shell
+   --pprof                          start profiling server on :6060
    --help, -h                       show help
    --version, -v                    print the version
    
-➜  ~ ./server_linux_amd64 -h
+> ./server_freebsd_amd64 -h
 NAME:
    kcptun - server(with SMUX)
 
 USAGE:
-   server_linux_amd64 [global options] command [command options] [arguments...]
+   server_freebsd_amd64 [global options] command [command options] [arguments...]
 
 VERSION:
-   20190924
+   20240729
 
 COMMANDS:
    help, h  Shows a list of commands or help for one command
@@ -193,7 +197,9 @@ GLOBAL OPTIONS:
    --listen value, -l value         kcp server listen address, eg: "IP:29900" for a single port, "IP:minport-maxport" for port range (default: ":29900")
    --target value, -t value         target server address, or path/to/unix_socket (default: "127.0.0.1:12948")
    --key value                      pre-shared secret between client and server (default: "it's a secrect") [$KCPTUN_KEY]
-   --crypt value                    aes, aes-128, aes-192, salsa20, blowfish, twofish, cast5, 3des, tea, xtea, xor, sm4, none (default: "aes")
+   --crypt value                    aes, aes-128, aes-192, salsa20, blowfish, twofish, cast5, 3des, tea, xtea, xor, sm4, none, null (default: "aes")
+   --QPP                            enable Quantum Permutation Pads(QPP)
+   --QPPCount value                 the prime number of pads to use for QPP: The more pads you use, the more secure the encryption. Each pad requires 256 bytes. (default: 61)
    --mode value                     profiles: fast3, fast2, fast, normal, manual (default: "fast")
    --mtu value                      set maximum transmission unit for UDP packets (default: 1350)
    --sndwnd value                   set send window size(num of packets) (default: 1024)
@@ -239,7 +245,7 @@ In coding theory, the [Reed–Solomon code](https://en.wikipedia.org/wiki/Reed%E
 
 It is able to detect and correct multiple symbol errors. By adding t check symbols to the data, a Reed–Solomon code can detect any combination of up to t erroneous symbols, or correct up to ⌊t/2⌋ symbols. As an erasure code, it can correct up to t known erasures, or it can detect and correct combinations of errors and erasures. Furthermore, Reed–Solomon codes are suitable as multiple-burst bit-error correcting codes, since a sequence of b + 1 consecutive bit errors can affect at most two symbols of size b. The choice of t is up to the designer of the code, and may be selected within wide limits.
 
-![FED](FEC.png)
+![FED](assets/FEC.png)
 
 #### DSCP
 
@@ -255,7 +261,7 @@ kcptun is shipped with builtin packet encryption powered by various block encryp
 
 The contents of the packets are completely anonymous with encryption, including the headers(FEC,KCP), checksums and contents. Note that, no matter which encryption method you choose on you upper layer, if you disable encryption by specifying `-crypt none` to kcptun, the transmit will be insecure somehow, since the header is ***PLAINTEXT*** to everyone it would be susceptible to header tampering, such as jamming the *sliding window size*, *round-trip time*, *FEC property* and *checksums*. ```aes-128``` is suggested for minimal encryption since modern CPUs are shipped with [AES-NI](https://en.wikipedia.org/wiki/AES_instruction_set) instructions and performs even better than `salsa20`(check the table below).
 
-Other possible attacks to kcptun includes: a) [traffic analysis](https://en.wikipedia.org/wiki/Traffic_analysis), dataflow on specific websites may have pattern while interchanging data, but this type of eavesdropping has been mitigated by adapting [smux](https://github.com/xtaci/smux) to mix data streams so as to introduce noises, perfect solution to this has not appeared yet, theroretically by shuffling/mixing messages on larger scale network may mitigate this problem.  b) [replay attack](https://en.wikipedia.org/wiki/Replay_attack), since the asymmetrical encryption has not been introduced into kcptun for some reason, capturing the packets and replay them on a different machine is possible, (notice: hijacking the session and decrypting the contents is still *impossible*), so upper layers should contain a asymmetrical encryption system to guarantee the authenticity of each message(to process message exactly once), such as HTTPS/OpenSSL/LibreSSL, only by signing the requests with private keys can eliminate this type of attack. 
+Other possible attacks to kcptun includes: a) [traffic analysis](https://en.wikipedia.org/wiki/Traffic_analysis), dataflow on specific websites may have pattern while interchanging data, but this type of eavesdropping has been mitigated by adapting [smux](https://github.com/xtaci/smux) to mix data streams so as to introduce noises, perfect solution to this has not appeared yet, theoretically by shuffling/mixing messages on larger scale network may mitigate this problem.  b) [replay attack](https://en.wikipedia.org/wiki/Replay_attack), since the asymmetrical encryption has not been introduced into kcptun for some reason, capturing the packets and replay them on a different machine is possible, (notice: hijacking the session and decrypting the contents is still *impossible*), so upper layers should contain a asymmetrical encryption system to guarantee the authenticity of each message(to process message exactly once), such as HTTPS/OpenSSL/LibreSSL, only by signing the requests with private keys can eliminate this type of attack. 
 
 Important: 
 1. `-crypt` and `-key` must be the same on both KCP Client & KCP Server.
@@ -297,7 +303,7 @@ type             16 bytes     64 bytes    256 bytes   1024 bytes   8192 bytes
 aes-128-cfb     847216.79k   850770.86k   853712.05k   859912.39k   854565.80k
 ```
 
-The encrytion performance in kcptun is as fast as in openssl library(if not faster).
+The encryption performance in kcptun is as fast as in openssl library(if not faster).
 
 #### Quantum Resistance
 Quantum Resistance, also known as quantum-secure, post-quantum, or quantum-safe cryptography, refers to cryptographic algorithms that can withstand potential code-breaking attempts by quantum computer.
@@ -306,15 +312,19 @@ In kcptun, after v20240701, it adapts [QPP](https://github.com/xtaci/qpp) based 
 
 To enable QPP in kcptun, you need to set: 
 ```
-   --QPP                Enable Quantum Permutation Pad for universal quantum-safe cryptography, based on classic cryptography
-   --QPPCount value     Number of pads to use for QPP, the more the pads, the more secure, one pad costs 256 bytes (default: 64)
+   --QPP                enable Quantum Permutation Pads(QPP)
+   --QPPCount value     the prime number of pads to use for QPP: The more pads you use, the more secure the encryption. Each pad requires 256 bytes. (default: 61)
 ```
 Your could also specify
 ```json
      "qpp":true,
-     "qpp-count":64,
+     "qpp-count":61,
 ```
 in your client and server side json file. These 2 parameters must be identical on both sides.
+
+1. To achieve **Effective Quantum-Resistance,**, specify at least **211** bytes in  the `-key` parameter and ensure `-QPPCount` is no less than **7**.
+2. Make sure `-QPPCount` is **COPRIME（互素）** to **8**(or simply set to a **PRIME** number) like: 
+```101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193, 197, 199... ```
 
 #### Memory Control
 
@@ -322,9 +332,9 @@ Routers, mobile devices are susceptible to memory consumption; by setting GOGC e
 Reference: https://blog.golang.org/go15gc
 
 Primary memory allocation are done from a global buffer pool *xmit.Buf*, in kcp-go, when we need to allocate some bytes, we can get from that pool, and a *fixed-capacity* 1500 bytes(mtuLimit) will be returned, the *rx queue*, *tx queue* and *fec queue* all receive bytes from there, and they will return the bytes to the pool after using to prevent *unnecessary zer0ing* of bytes. 
-The pool mechanism maintained a *high watermark* for slice objects, these *in-flight* objects from the pool will survive from the perodical garbage collection, meanwhile the pool kept the ability to return the memory to runtime if in idle, `-sndwnd`,`-rcvwnd`,`-ds`, `-ps`, these parameters affect this *high watermark*, the larger the value, the bigger the memory consumption will be.
+The pool mechanism maintained a *high watermark* for slice objects, these *in-flight* objects from the pool will survive from the periodical garbage collection, meanwhile the pool kept the ability to return the memory to runtime if in idle, `-sndwnd`,`-rcvwnd`,`-ds`, `-ps`, these parameters affect this *high watermark*, the larger the value, the bigger the memory consumption will be.
 
-`-smuxbuf` also affects the maximum memory consumption, this parameter maintains a subtle balance between *concurrency* and *resource*, you can increase this value(default 4MB) to boost concurrency if you have many clients to serve and you get a powerful server at the same time, and also you can decrease this value to serve only 1 or 2 clients and hope this program can run under some embedded SoC system with limited memory and only you can access. (Notice that the `-smuxbuf` value is not proprotional to concurrency, you need to test.)
+`-smuxbuf` also affects the maximum memory consumption, this parameter maintains a subtle balance between *concurrency* and *resource*, you can increase this value(default 4MB) to boost concurrency if you have many clients to serve and you get a powerful server at the same time, and also you can decrease this value to serve only 1 or 2 clients and hope this program can run under some embedded SoC system with limited memory and only you can access. (Notice that the `-smuxbuf` value is not proportional to concurrency, you need to test.)
 
 
 #### Compression
@@ -356,17 +366,17 @@ type Snmp struct {
     CurrEstab        uint64 // current number of established connections
     InErrs           uint64 // UDP read errors reported from net.PacketConn
     InCsumErrors     uint64 // checksum errors from CRC32
-    KCPInErrors      uint64 // packet iput errors reported from KCP
+    KCPInErrors      uint64 // packet input errors reported from KCP
     InPkts           uint64 // incoming packets count
     OutPkts          uint64 // outgoing packets count
     InSegs           uint64 // incoming KCP segments
     OutSegs          uint64 // outgoing KCP segments
     InBytes          uint64 // UDP bytes received
     OutBytes         uint64 // UDP bytes sent
-    RetransSegs      uint64 // accmulated retransmited segments
-    FastRetransSegs  uint64 // accmulated fast retransmitted segments
-    EarlyRetransSegs uint64 // accmulated early retransmitted segments
-    LostSegs         uint64 // number of segs infered as lost
+    RetransSegs      uint64 // accumulated retransmitted segments
+    FastRetransSegs  uint64 // accumulated fast retransmitted segments
+    EarlyRetransSegs uint64 // accumulated early retransmitted segments
+    LostSegs         uint64 // number of segs inferred as lost
     RepeatSegs       uint64 // number of segs duplicated
     FECRecovered     uint64 // correct packets recovered from FEC
     FECErrs          uint64 // incorrect packets recovered from FEC
@@ -386,7 +396,7 @@ https://github.com/skywind3000/kcp/blob/master/README.en.md#protocol-configurati
 Low-level KCP configuration can be altered by using manual mode like above, make sure you really **UNDERSTAND** what these means before doing **ANY** manual settings.
 
 
-### Identical Parmeters
+### Identical parameters
 
 These parameters **MUST** be **IDENTICAL** on **BOTH** side:
 

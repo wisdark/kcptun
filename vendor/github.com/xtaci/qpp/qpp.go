@@ -1,3 +1,18 @@
+// # Copyright (c) 2024 xtaci
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package qpp
 
 import (
@@ -24,14 +39,15 @@ const (
 	PBKDF2_LOOPS           = 128 // Number of iterations for PBKDF2
 	CHUNK_DERIVE_SALT      = "___QUANTUM_PERMUTATION_PAD_SEED_DERIVE___"
 	CHUNK_DERIVE_LOOPS     = 1024
-	MAGIC                  = 0x1A2B3C4D5E6F7890
 	PAD_SWITCH             = 8 // switch pad for every PAD_SWITCH bytes
+	QUBITS                 = 8 // number of quantum bits of this implementation
 )
 
 // Rand is a stateful random number generator
 type Rand struct {
-	seed64 uint64
-	count  uint8
+	xoshiro [4]uint64 // xoshiro state
+	seed64  uint64    // the latest random number
+	count   uint8     // number of bytes encrypted, counted in modular arithmetic
 }
 
 // QuantumPermutationPad represents the encryption/decryption structure using quantum permutation pads
@@ -40,29 +56,27 @@ type QuantumPermutationPad struct {
 	pads     []byte  // Encryption pads, each pad is a permutation matrix for encryption
 	rpads    []byte  // Decryption pads, each pad is a reverse permutation matrix for decryption
 	padsPtr  uintptr // raw pointer to encryption pads
-	rpadsPtr uintptr // raw pointer to encryption pads
+	rpadsPtr uintptr // raw pointer to decryption pads
 
 	numPads uint16 // Number of pads (permutation matrices)
-	qubits  uint8  // Number of quantum bits, determines the size of each pad
 	encRand *Rand  // Default random source for encryption pad selection
 	decRand *Rand  // Default random source for decryption pad selection
 }
 
 // NewQPP creates a new Quantum Permutation Pad instance with the provided seed, number of pads, and qubits
 // The seed is used to generate deterministic pseudo-random number generators (PRNGs) for both encryption and decryption
-func NewQPP(seed []byte, numPads uint16, qubits uint8) *QuantumPermutationPad {
+func NewQPP(seed []byte, numPads uint16) *QuantumPermutationPad {
 	qpp := &QuantumPermutationPad{
 		numPads: numPads,
-		qubits:  qubits,
 	}
 
-	matrixBytes := 1 << qubits
+	matrixBytes := 1 << QUBITS
 	qpp.pads = make([]byte, int(numPads)*matrixBytes)
 	qpp.rpads = make([]byte, int(numPads)*matrixBytes)
 	qpp.padsPtr = uintptr(unsafe.Pointer(unsafe.SliceData(qpp.pads)))
 	qpp.rpadsPtr = uintptr(unsafe.Pointer(unsafe.SliceData(qpp.rpads)))
 
-	chunks := seedToChunks(seed, qubits)
+	chunks := seedToChunks(seed, QUBITS)
 	// creat AES-256 blocks to generate random number for shuffling
 	var blocks []cipher.Block
 	for i := range chunks {
@@ -79,13 +93,13 @@ func NewQPP(seed []byte, numPads uint16, qubits uint8) *QuantumPermutationPad {
 		// Fill pad with sequential byte values
 		fill(pad)
 		// Shuffle pad to create a unique permutation matrix
-		shuffle(chunks[i%len(chunks)], qubits, pad, uint16(i), blocks)
+		shuffle(chunks[i%len(chunks)], QUBITS, pad, uint16(i), blocks)
 		// Create the reverse permutation matrix for decryption
 		reverse(pad, rpad)
 	}
 
-	qpp.encRand = qpp.CreatePRNG(seed) // Create default PRNG for encryption
-	qpp.decRand = qpp.CreatePRNG(seed) // Create default PRNG for decryption
+	qpp.encRand = CreatePRNG(seed) // Create default PRNG for encryption
+	qpp.decRand = CreatePRNG(seed) // Create default PRNG for decryption
 
 	return qpp
 }
@@ -104,79 +118,174 @@ func (qpp *QuantumPermutationPad) Decrypt(data []byte) {
 
 // CreatePRNG creates a deterministic pseudo-random number generator based on the provided seed
 // It uses HMAC and PBKDF2 to derive a random seed for the PRNG
-func (qpp *QuantumPermutationPad) CreatePRNG(seed []byte) *Rand {
+func CreatePRNG(seed []byte) *Rand {
 	mac := hmac.New(sha256.New, seed)
 	mac.Write([]byte(PM_SELECTOR_IDENTIFIER))
 	sum := mac.Sum(nil)
-	dk := pbkdf2.Key(sum, []byte(PRNG_SALT), PBKDF2_LOOPS, 8, sha1.New) // Derive a key for PRNG
-	seed64 := binary.LittleEndian.Uint64(dk)
-	if seed64 == 0 {
-		seed64 = MAGIC
-	}
-	return &Rand{seed64: seed64} // Create and return PRNG
+
+	// Derive a key for xoroshiro256**
+	xoshiro := pbkdf2.Key(sum, []byte(PRNG_SALT), PBKDF2_LOOPS, 32, sha1.New)
+	// Create and return PRNG
+	rd := &Rand{}
+	rd.xoshiro[0] = binary.LittleEndian.Uint64(xoshiro[0:8])
+	rd.xoshiro[1] = binary.LittleEndian.Uint64(xoshiro[8:16])
+	rd.xoshiro[2] = binary.LittleEndian.Uint64(xoshiro[16:24])
+	rd.xoshiro[3] = binary.LittleEndian.Uint64(xoshiro[24:32])
+	rd.seed64 = xoshiro256ss(&rd.xoshiro)
+	return rd
+}
+
+// FastPRNG creates a deterministic pseudo-random number generator based on the provided seed
+func FastPRNG(seed []byte) *Rand {
+	sha := sha256.New()
+	sum := sha.Sum(seed)
+
+	// Create and return PRNG
+	rd := &Rand{}
+	rd.xoshiro[0] = binary.LittleEndian.Uint64(sum[0:8])
+	rd.xoshiro[1] = binary.LittleEndian.Uint64(sum[8:16])
+	rd.xoshiro[2] = binary.LittleEndian.Uint64(sum[16:24])
+	rd.xoshiro[3] = binary.LittleEndian.Uint64(sum[24:32])
+	rd.seed64 = xoshiro256ss(&rd.xoshiro)
+	return rd
 }
 
 // EncryptWithPRNG encrypts the data using the Quantum Permutation Pad with a custom PRNG
 // This function shares the same permutation matrices
 func (qpp *QuantumPermutationPad) EncryptWithPRNG(data []byte, rand *Rand) {
 	// initial r, index, count
-	r := uint32(rand.seed64)
-	index := uint16(r) % qpp.numPads // Select a permutation matrix index
+	size := len(data)
+	r := rand.seed64
+	base := qpp.padsPtr + uintptr(uint16(r)%qpp.numPads)<<8
 	count := rand.count
+	var rr byte
 
-	// loop
-	switch qpp.qubits {
-	case NATIVE_BYTE_LENGTH:
-		for i := 0; i < len(data); i++ {
-			// switch to another permutation pad for every 256 bytes
-			if count%PAD_SWITCH == 0 {
-				index = uint16(r) % qpp.numPads
-				count = 0
-			}
-
-			offset := qpp.padsPtr + uintptr(index)<<8 + uintptr(data[i]^byte(r)) // Calculate the offset
-			data[i] = *(*byte)(unsafe.Pointer(offset))                           // Apply the permutation to the data byte
-
+	// handle unaligned 8bytes
+	if count != 0 {
+		offset := 0
+		for ; offset < len(data); offset++ {
+			// using r as the base random number
+			rr = byte(r >> (count * 8))
+			data[offset] = *(*byte)(unsafe.Pointer(base + uintptr(data[offset]^rr)))
 			count++
-			r = xorshift32(r)
-		}
 
-		// set back r & count
-		rand.seed64 = uint64(r)
-		rand.count += uint8(len(data) % PAD_SWITCH)
-	default:
-		// Handle other cases if needed
+			// switch to another pad when count reaches PAD_SWITCH
+			if count == PAD_SWITCH {
+				// switch to another pad
+				r = xoshiro256ss(&rand.xoshiro)
+				base = qpp.padsPtr + uintptr(uint16(r)%qpp.numPads)<<8
+				offset = offset + 1
+				count = 0
+				break
+			}
+		}
+		data = data[offset:] // aligned bytes start from here
 	}
 
+	// handle 8-bytes aligned, loop unrolling to improve performance(to mitigate data-dependency)
+	repeat := len(data) / 8
+	for i := 0; i < repeat; i++ {
+		d := data[i*8 : i*8+8]
+		rr0 := byte(r >> 0)
+		rr1 := byte(r >> 8)
+		rr2 := byte(r >> 16)
+		rr3 := byte(r >> 24)
+		rr4 := byte(r >> 32)
+		rr5 := byte(r >> 40)
+		rr6 := byte(r >> 48)
+		rr7 := byte(r >> 56)
+
+		d[0] = *(*byte)(unsafe.Pointer(base + uintptr(d[0]^rr0)))
+		d[1] = *(*byte)(unsafe.Pointer(base + uintptr(d[1]^rr1)))
+		d[2] = *(*byte)(unsafe.Pointer(base + uintptr(d[2]^rr2)))
+		d[3] = *(*byte)(unsafe.Pointer(base + uintptr(d[3]^rr3)))
+		d[4] = *(*byte)(unsafe.Pointer(base + uintptr(d[4]^rr4)))
+		d[5] = *(*byte)(unsafe.Pointer(base + uintptr(d[5]^rr5)))
+		d[6] = *(*byte)(unsafe.Pointer(base + uintptr(d[6]^rr6)))
+		d[7] = *(*byte)(unsafe.Pointer(base + uintptr(d[7]^rr7)))
+
+		r = xoshiro256ss(&rand.xoshiro)
+		base = qpp.padsPtr + uintptr(uint16(r)%qpp.numPads)<<8
+	}
+	data = data[repeat*8:]
+
+	// handle remaining unaligned bytes
+	for i := 0; i < len(data); i++ {
+		rr = byte(r >> (count * 8))
+		data[i] = *(*byte)(unsafe.Pointer(base + uintptr(data[i]^byte(rr))))
+		count++
+	}
+
+	// set back r & count
+	rand.seed64 = uint64(r)
+	rand.count = uint8((int(rand.count) + size) % PAD_SWITCH)
 }
 
 // DecryptWithPRNG decrypts the data using the Quantum Permutation Pad with a custom PRNG
 // This function shares the same permutation matrices
 func (qpp *QuantumPermutationPad) DecryptWithPRNG(data []byte, rand *Rand) {
-	r := uint32(rand.seed64)
-	index := uint16(r) % qpp.numPads // Select a permutation matrix index
+	size := len(data)
+	r := rand.seed64
+	base := qpp.rpadsPtr + uintptr(uint16(r)%qpp.numPads)<<8
 	count := rand.count
+	var rr byte
 
-	switch qpp.qubits {
-	case NATIVE_BYTE_LENGTH:
-		for i := 0; i < len(data); i++ {
-			if count%PAD_SWITCH == 0 {
-				index = uint16(r) % qpp.numPads
-				count = 0
-			}
-
-			offset := qpp.rpadsPtr + uintptr(index)<<8 + uintptr(data[i]) // Calculate the offset
-			data[i] = *(*byte)(unsafe.Pointer(offset)) ^ byte(r)          // Apply the permutation to the data byte
+	// handle unaligned 8bytes
+	if count != 0 {
+		offset := 0
+		for ; offset < len(data); offset++ {
+			rr = byte(r >> (count * 8))
+			data[offset] = *(*byte)(unsafe.Pointer(base + uintptr(data[offset]))) ^ rr
 			count++
-			r = xorshift32(r)
-		}
 
-		// set back r & count
-		rand.seed64 = uint64(r)
-		rand.count += uint8(len(data) % PAD_SWITCH)
-	default:
-		// Handle other cases if needed
+			if count == PAD_SWITCH {
+				r = xoshiro256ss(&rand.xoshiro)
+				base = qpp.rpadsPtr + uintptr(uint16(r)%qpp.numPads)<<8
+				offset = offset + 1
+				count = 0
+				break
+			}
+		}
+		data = data[offset:]
 	}
+
+	// handle 8-bytes aligned
+	repeat := len(data) / 8
+	for i := 0; i < repeat; i++ {
+		d := data[i*8 : i*8+8]
+		rr0 := byte(r >> 0)
+		rr1 := byte(r >> 8)
+		rr2 := byte(r >> 16)
+		rr3 := byte(r >> 24)
+		rr4 := byte(r >> 32)
+		rr5 := byte(r >> 40)
+		rr6 := byte(r >> 48)
+		rr7 := byte(r >> 56)
+
+		d[0] = *(*byte)(unsafe.Pointer(base + uintptr(d[0]))) ^ rr0
+		d[1] = *(*byte)(unsafe.Pointer(base + uintptr(d[1]))) ^ rr1
+		d[2] = *(*byte)(unsafe.Pointer(base + uintptr(d[2]))) ^ rr2
+		d[3] = *(*byte)(unsafe.Pointer(base + uintptr(d[3]))) ^ rr3
+		d[4] = *(*byte)(unsafe.Pointer(base + uintptr(d[4]))) ^ rr4
+		d[5] = *(*byte)(unsafe.Pointer(base + uintptr(d[5]))) ^ rr5
+		d[6] = *(*byte)(unsafe.Pointer(base + uintptr(d[6]))) ^ rr6
+		d[7] = *(*byte)(unsafe.Pointer(base + uintptr(d[7]))) ^ rr7
+
+		r = xoshiro256ss(&rand.xoshiro)
+		base = qpp.rpadsPtr + uintptr(uint16(r)%qpp.numPads)<<8
+	}
+	data = data[repeat*8:]
+
+	// handle remaining unaligned bytes
+	for i := 0; i < len(data); i++ {
+		rr = byte(r >> (count * 8))
+		data[i] = *(*byte)(unsafe.Pointer(base + uintptr(data[i]))) ^ rr
+		count++
+	}
+
+	// set back r & count
+	rand.seed64 = r
+	rand.count = uint8((int(rand.count) + size) % PAD_SWITCH)
 }
 
 // QPPMinimumSeedLength calculates the length required for the seed based on the number of qubits
@@ -209,8 +318,9 @@ func QPPMinimumPads(qubits uint8) int {
 // fill initializes the pad with sequential byte values
 // This sets up a standard permutation matrix before it is shuffled
 func fill(pad []byte) {
-	for i := 0; i < len(pad); i++ {
-		pad[i] = byte(i)
+	pad[0] = 0
+	for i := 1; i < len(pad); i++ {
+		pad[i] = pad[i-1] + 1
 	}
 }
 
